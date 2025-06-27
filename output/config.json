@@ -1,0 +1,51 @@
+{
+  "ldm_steps": 20,
+  "ldm_sampler": "plms",
+  "zits_wireframe": true,
+  
+  "hd_strategy": "Crop",
+  "hd_strategy_crop_trigger_size": 800,
+  "hd_strategy_crop_margin": 128,
+  "hd_strategy_resize_limit": 1280,
+  
+  "prompt": "",
+  "negative_prompt": "",
+  
+  "use_croper": false,
+  "croper_x": 0,
+  "croper_y": 0,
+  "croper_height": 512,
+  "croper_width": 512,
+  "use_extender": false,
+  "extender_x": 0,
+  "extender_y": 0,
+  "extender_height": 640,
+  "extender_width": 640,
+  
+  "sd_scale": 1.0,
+  "sd_mask_blur": 11,
+  "sd_strength": 1.0,
+  "sd_steps": 50,
+  "sd_guidance_scale": 7.5,
+  "sd_sampler": "UniPC",
+  "sd_seed": -1,
+  "sd_match_histograms": false,
+  "sd_outpainting_softness": 20.0,
+  "sd_outpainting_space": 20.0,
+  "sd_lcm_lora": false,
+  "sd_keep_unmasked_area": true,
+  
+  "cv2_flag": "INPAINT_NS",
+  "cv2_radius": 4,
+  
+  "p2p_image_guidance_scale": 1.5,
+  "enable_controlnet": false,
+  "controlnet_conditioning_scale": 0.4,
+  "controlnet_method": "lllyasviel/control_v11p_sd15_canny",
+  "enable_brushnet": false,
+  "brushnet_method": "Sanster/brushnet_random_mask",
+  "brushnet_conditioning_scale": 1.0,
+  "enable_powerpaint_v2": false,
+  "powerpaint_task": "text-guided",
+  "fitting_degree": 1.0
+}
