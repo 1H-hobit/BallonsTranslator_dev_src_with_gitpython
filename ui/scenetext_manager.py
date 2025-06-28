@@ -1,4 +1,3 @@
-
 from typing import List, Union, Tuple
 import numpy as np
 import copy
@@ -22,7 +21,8 @@ from utils import shared
 from utils.imgproc_utils import extract_ballon_region, rotate_polygons, get_block_mask
 from utils.text_processing import seg_text, is_cjk
 from utils.text_layout import layout_text
-
+from modules.textdetector.detector_paddleocr import generate_mask_from_original_bbox
+from modules.textdetector.detector_paddleocr import generate_mask_from_user_rect
 
 class CreateItemCommand(QUndoCommand):
     def __init__(self, blk_item: TextBlkItem, ctrl, parent=None):
@@ -355,6 +355,7 @@ class SceneTextManager(QObject):
         self.hovering_transwidget : TransTextEdit = None
 
         self.prev_blkitem: TextBlkItem = None
+        self.mask_expand_pixels = getattr(pcfg, 'mask_expand_pixels', 6)  # 默认值6    
 
     def on_switch_textitem(self, switch_delta: int, key_event: QKeyEvent = None, current_editing_widget: Union[SourceTextEdit, TransTextEdit] = None):
         n_blk = len(self.textblk_item_list)
@@ -927,16 +928,80 @@ class SceneTextManager(QObject):
         blkitem.repaint_background()
 
     def onEndCreateTextBlock(self, rect: QRectF):
-        xyxy = np.array([rect.x(), rect.y(), rect.right(), rect.bottom()])        
+
+        # 直接从项目对象获取多边形信息
+        polygon_info_list = getattr(self.imgtrans_proj, 'polygon_info_list', [])
+
+        # 将用户绘制的矩形区域 rect 转换为 numpy 数组 [x1, y1, x2, y2]
+        xyxy = np.array([rect.x(), rect.y(), rect.right(), rect.bottom()])
+        
+        # 坐标四舍五入并转为整数（像素坐标）
         xyxy = np.round(xyxy).astype(np.int32)
+
+        # 将用户绘制的矩形添加到多边形信息列表
+        user_rect_info = {
+            'min_x': xyxy[0],
+            'min_y': xyxy[1],
+            'max_x': xyxy[2],
+            'max_y': xyxy[3]
+        }
+        updated_polygon_info_list = polygon_info_list + [user_rect_info]
+
+        # 创建 TextBlock 对象，存储文本块的坐标和属性
         block = TextBlock(xyxy)
+        
+        # 计算矩形的宽高：xywh = [x, y, width, height]
         xywh = np.copy(xyxy)
-        xywh[[2, 3]] -= xywh[[0, 1]]
+        xywh[[2, 3]] -= xywh[[0, 1]]  # width = x2 - x1, height = y2 - y1
+        
+        # 根据宽高设置文本块的行信息（如行高、基线等）
         block.set_lines_by_xywh(xywh)
+        
+        # 继承全局格式的垂直排版设置（是否竖排文字）
         block.src_is_vertical = self.formatpanel.global_format.vertical
-        blk_item = TextBlkItem(block, len(self.textblk_item_list), set_format=False, show_rect=True)
+        
+        # 创建文本块的图形项（UI 元素）
+        blk_item = TextBlkItem(
+            block,                          # 文本块数据
+            len(self.textblk_item_list),     # 赋予唯一索引（当前列表长度）
+            set_format=False,                # 暂不应用格式
+            show_rect=True                   # 显示矩形框
+        )
+        
+        # 为图形项设置字体格式（字号、颜色等）
         blk_item.set_fontformat(self.formatpanel.global_format)
+        
+        # 将创建操作加入撤销栈（支持 Ctrl+Z 撤销）
         self.canvas.push_undo_command(CreateItemCommand(blk_item, self))
+
+        # 1. 获取当前图像
+        img_array = self.imgtrans_proj.img_array
+        
+        #如果polygon_info_list有值时，则有检测文本框的mask
+        if img_array is not None and polygon_info_list:
+            # updated_polygon_info_list是加上用户绘制的矩形坐标xyxy
+            mask = generate_mask_from_original_bbox(
+                    img_array,
+                    updated_polygon_info_list,
+                    self.mask_expand_pixels
+                ) 
+            print("在检测文本框的mask的基础上新加了用户绘制的mask掩码")
+        else:
+            # 如果条件不满足，生成当前图像新加的mask掩码
+            mask = generate_mask_from_user_rect(
+                img_array,
+                xyxy,  # 直接使用用户绘制的矩形坐标
+                self.mask_expand_pixels
+            )
+            
+        # 更新项目中的掩码
+        self.imgtrans_proj.mask_array = mask  # 直接设置掩码数组
+        self.imgtrans_proj.inpainted_array = img_array.copy()  # 复制原图作为修复基础
+        
+        # 更新画布显示
+        self.canvas.updateLayers()
+        print("Mask updated successfully")
+            
 
     def on_paste2selected_textitems(self):
         blkitems = self.canvas.selected_text_items()

@@ -10,7 +10,10 @@ from torchvision.transforms.functional import InterpolationMode  # 图像插值�
 from PIL import Image
 import cv2
 
-@register_OCR('InternVL3-2B')
+ocr_model = None
+ocr_tokenizer = None
+
+@register_OCR('InternVL3-8B')
 class CustomOCR(OCRBase):
     lang_map = {
                 "Chinese & English": "ch",
@@ -28,25 +31,58 @@ class CustomOCR(OCRBase):
         super().__init__(**params)
         self.max_new_tokens = self.params["max_new_tokens"]["value"]
         self.model = None  # 初始化模型变量
-        self._load_model()
+
 
     def _load_model(self):
-        MODEL_NAME = r"D:\chainlit\models\InternVL3-2B"
+        MODEL_NAME = r"D:\chainlit\models\InternVL3-8B"
         global ocr_model
         global ocr_tokenizer
 
         ocr_model = AutoModel.from_pretrained(
             MODEL_NAME,
+            load_in_4bit=True,
+            #load_in_8bit=True,
             torch_dtype=torch.bfloat16,
-            load_in_8bit=True,
             low_cpu_mem_usage=True,
             use_flash_attn=True,
+            device_map="auto",
             trust_remote_code=True).eval()
 
         ocr_tokenizer = AutoTokenizer.from_pretrained(
             MODEL_NAME,
             trust_remote_code=True
         )
+
+    # ======================== 卸载OCR模型和处理器，释放内存 ========================
+    def _unload_ocr_model(self):
+        global ocr_model
+        global ocr_tokenizer
+        
+        try:
+            # 删除模型和分词器的所有引用（不再尝试移动设备）
+            del ocr_model
+            del ocr_tokenizer
+            
+            # 强制垃圾回收
+            import gc
+            gc.collect()
+            
+            # 清理GPU缓存
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                
+            print("✅ OCR模型已成功卸载")
+            
+        except Exception as e:
+            print(f"❌ 卸载OCR模型失败: {str(e)}")
+        finally:
+            # 确保全局变量置空
+            ocr_model = None
+            ocr_tokenizer = None
+
 
     # ai_ocr图像预处理
     def build_transform(self, input_size):
@@ -181,6 +217,7 @@ class CustomOCR(OCRBase):
 
 
     def _ocr_blk_list(self, img: np.ndarray, blk_list: List[TextBlock], *args, **kwargs):
+        self._load_model()
         # 对文本块列表进行 OCR 处理的逻辑
         im_h, im_w = img.shape[:2]
         for blk in blk_list:
@@ -191,3 +228,4 @@ class CustomOCR(OCRBase):
             else:
                 self.logger.warning('invalid textbbox to target img')
                 blk.text = ['']
+        self._unload_ocr_model()  # 添加在方法末尾

@@ -322,9 +322,9 @@ class MainWindow(mainwindow_cls):
         self.bottomBar.originalSlider.setValue(int(pcfg.original_transparency * 100))
         self.bottomBar.trans_selector.selector.addItems(GET_VALID_TRANSLATORS())
         self.bottomBar.ocr_selector.selector.addItems(GET_VALID_OCR())
-        if 'InternVL3-2B' not in GET_VALID_OCR():
-                GET_VALID_OCR().append('InternVL3-2B')
-                self.bottomBar.ocr_selector.selector.addItem('InternVL3-2B')
+        if 'InternVL3-8B' not in GET_VALID_OCR():
+                GET_VALID_OCR().append('InternVL3-8B')
+                self.bottomBar.ocr_selector.selector.addItem('InternVL3-8B')
         self.bottomBar.textdet_selector.selector.addItems(GET_VALID_TEXTDETECTORS())
         self.bottomBar.textdet_selector.selector.currentTextChanged.connect(self.on_textdet_changed)
         self.bottomBar.inpaint_selector.selector.addItems(GET_VALID_INPAINTERS())

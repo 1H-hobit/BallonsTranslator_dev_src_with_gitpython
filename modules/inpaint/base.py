@@ -613,18 +613,18 @@ class LamaLarge(LamaInpainterMPE):
 class IopaintLDMInpainter(InpainterBase):
     params = {
         'device': DEVICE_SELECTOR(),
-        'model_dir': {
-            'type': 'str',
-            'value': 'data/models/LDM',
-            'description': '模型目录路径'
-        },
+        # 'model_dir': {
+        #     'type': 'str',
+        #     'value': 'data/models/LDM',
+        #     'description': '模型目录路径'
+        # },
         'description': '基于LDM的高级修复模型'
     }
 
     def __init__(self, **params) -> None:
         super().__init__(**params)
         self.device = self.params['device']['value']
-        self.model_dir = self.params['model_dir']['value']
+        self.model_dir = "data/models/LDM"
 
     def moveToDevice(self, device: str, precision: str = None):
         self.device = device

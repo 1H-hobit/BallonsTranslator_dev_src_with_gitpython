@@ -1,3 +1,4 @@
+from utils.config import pcfg
 import numpy as np
 import cv2
 from typing import Tuple, List, Optional
@@ -12,6 +13,71 @@ def load_paddleocr_model(model_dir):
     model = TextDetection(model_dir=model_dir, device="gpu:0")
     return model
 
+def generate_mask_from_user_rect(img: np.ndarray, rect: np.ndarray, mask_expand_pixels: int) -> np.ndarray:
+    """根据用户绘制的矩形区域生成掩码"""
+    # 解包矩形坐标 [x1, y1, x2, y2]
+    min_x, min_y, max_x, max_y = rect
+    
+    # 创建掩码
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    h, w = img.shape[:2]
+    
+    # 应用掩码扩展值
+    x_min = max(0, min_x - mask_expand_pixels)
+    y_min = max(0, min_y - mask_expand_pixels)
+    x_max = min(w, max_x + mask_expand_pixels)
+    y_max = min(h, max_y + mask_expand_pixels)
+    
+    # 确保坐标有效
+    if x_min >= x_max or y_min >= y_max:
+        return mask
+    
+    # 创建矩形
+    expanded_rect = np.array([
+        [[x_min, y_min]],
+        [[x_max, y_min]],
+        [[x_max, y_max]],
+        [[x_min, y_max]]
+    ], dtype=np.int32)
+    
+    # 填充白色区域
+    cv2.fillPoly(mask, [expanded_rect], 255)
+    return mask
+
+def generate_mask_from_original_bbox(img: np.ndarray, polygon_info_list: List[dict], mask_expand_pixels: int) -> np.ndarray:
+    """根据原始边界框生成掩码，使用掩码扩展值"""
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    h, w = img.shape[:2]
+    for item in polygon_info_list:
+        # 获取原始边界框
+        min_x = item['min_x']
+        min_y = item['min_y']
+        max_x = item['max_x']
+        max_y = item['max_y']
+        
+        # 应用掩码扩展值
+        x_min = max(0, min_x - mask_expand_pixels)
+        y_min = max(0, min_y - mask_expand_pixels)
+        x_max = min(w, max_x + mask_expand_pixels)
+        y_max = min(h, max_y + mask_expand_pixels)
+        
+        # 确保坐标有效
+        if x_min >= x_max or y_min >= y_max:
+            continue
+        
+        # 创建矩形
+        expanded_rect = np.array([
+            [[x_min, y_min]],
+            [[x_max, y_min]],
+            [[x_max, y_max]],
+            [[x_min, y_max]]
+        ], dtype=np.int32)
+        
+        # 填充白色区域
+        cv2.fillPoly(mask, [expanded_rect], 255)
+    return mask
+
+
 @register_textdetectors('paddleocr_detector')
 class PaddleOCRTextDetector(TextDetectorBase):
 
@@ -22,6 +88,13 @@ class PaddleOCRTextDetector(TextDetectorBase):
             'options': [str(i) for i in range(0, 21)],
             'value': '8',
             'label': '文本框扩展像素'
+        },
+        # 添加掩码扩展像素参数
+        'mask expand pixels': {
+            'type': 'selector',
+            'options': [str(i) for i in range(0, 21)],
+            'value': '6',
+            'label': '掩码扩展像素'
         },
         'font size multiplier': {
             'type': 'selector',
@@ -194,7 +267,7 @@ class PaddleOCRTextDetector(TextDetectorBase):
                             box_arr[j, 0, 1] = max_y
 
             # 填充mask的掩码区域为白色
-            cv2.fillPoly(mask, [box_arr], 255)
+            # cv2.fillPoly(mask, [box_arr], 255)
             
             # 重新计算实际尺寸
             x_coords = box_arr[:, 0, 0]
@@ -376,6 +449,11 @@ class PaddleOCRTextDetector(TextDetectorBase):
         # 重新排序文本块
         blk_list = sort_regions(blk_list)
 
+        # 获取掩码扩展值
+        mask_expand_pixels = self.get_numeric_param('mask expand pixels') or 6
+        # 使用最终文本块生成掩码
+        mask = generate_mask_from_original_bbox(img, polygon_info_list, mask_expand_pixels)       
+
         # 字体大小调整
         fnt_rsz = self.get_numeric_param('font size multiplier')
         fnt_max = self.get_numeric_param('font size max')
@@ -410,6 +488,9 @@ class PaddleOCRTextDetector(TextDetectorBase):
         if ksize > 0:
             element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * ksize + 1, 2 * ksize + 1), (ksize, ksize))
             mask = cv2.dilate(mask, element)
+
+        # 确保在返回前保存多边形信息
+        proj.polygon_info_list = polygon_info_list  # 确保这行代码在返回前执行
 
         return mask, blk_list
 
