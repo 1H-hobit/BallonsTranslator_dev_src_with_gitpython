@@ -2,6 +2,7 @@ from utils.config import pcfg
 import numpy as np
 import cv2
 from typing import Tuple, List, Optional
+import uuid
 
 from .base import register_textdetectors, TextDetectorBase, TextBlock, DEFAULT_DEVICE, DEVICE_SELECTOR, ProjImgTrans
 from paddleocr import TextDetection
@@ -42,6 +43,9 @@ def generate_mask_from_user_rect(img: np.ndarray, rect: np.ndarray, mask_expand_
     
     # 填充白色区域
     cv2.fillPoly(mask, [expanded_rect], 255)
+    # 将掩码叠加到原图上
+    #masked_img = cv2.bitwise_and(img, img, mask=mask)
+    cv2.imshow('user_rect', mask)  # 如果需要调试可以取消注释
     return mask
 
 def generate_mask_from_original_bbox(img: np.ndarray, polygon_info_list: List[dict], mask_expand_pixels: int) -> np.ndarray:
@@ -77,6 +81,42 @@ def generate_mask_from_original_bbox(img: np.ndarray, polygon_info_list: List[di
         cv2.fillPoly(mask, [expanded_rect], 255)
     return mask
 
+def generate_maskedimg_from_original_bbox(img: np.ndarray, polygon_info_list: List[dict], mask_expand_pixels: int) -> np.ndarray:
+    """根据原始边界框生成掩码，并返回掩码叠加后的图片"""
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    h, w = img.shape[:2]
+    for item in polygon_info_list:
+        # 获取原始边界框
+        min_x = item['min_x']
+        min_y = item['min_y']
+        max_x = item['max_x']
+        max_y = item['max_y']
+        
+        # 应用掩码扩展值
+        x_min = max(0, min_x - mask_expand_pixels)
+        y_min = max(0, min_y - mask_expand_pixels)
+        x_max = min(w, max_x + mask_expand_pixels)
+        y_max = min(h, max_y + mask_expand_pixels)
+        
+        # 确保坐标有效
+        if x_min >= x_max or y_min >= y_max:
+            continue
+        
+        # 创建矩形
+        expanded_rect = np.array([
+            [[x_min, y_min]],
+            [[x_max, y_min]],
+            [[x_max, y_max]],
+            [[x_min, y_max]]
+        ], dtype=np.int32)
+        
+        # 填充白色区域
+        cv2.fillPoly(mask, [expanded_rect], 255)
+    
+    # 将掩码叠加到原图上
+    masked_img = cv2.bitwise_and(img, img, mask=mask)
+    cv2.imshow('masked_img', masked_img)
+    return masked_img
 
 @register_textdetectors('paddleocr_detector')
 class PaddleOCRTextDetector(TextDetectorBase):
@@ -185,7 +225,7 @@ class PaddleOCRTextDetector(TextDetectorBase):
         threshold = self.get_numeric_param('dt_scores_threshold')
         im_h, im_w = img.shape[:2]
 
-        # 第一阶段：收集所有检测框信息并填充掩码
+        # 第一阶段：收集所有检测框信息
         for i, box in enumerate(dt_polys):
             score = dt_scores[i]
             if float(score) < threshold:
@@ -266,9 +306,6 @@ class PaddleOCRTextDetector(TextDetectorBase):
                         else:
                             box_arr[j, 0, 1] = max_y
 
-            # 填充mask的掩码区域为白色
-            # cv2.fillPoly(mask, [box_arr], 255)
-            
             # 重新计算实际尺寸
             x_coords = box_arr[:, 0, 0]
             y_coords = box_arr[:, 0, 1]
@@ -283,6 +320,7 @@ class PaddleOCRTextDetector(TextDetectorBase):
 
             # 存储多边形信息
             polygon_info_list.append({
+                'uid': str(uuid.uuid4()),  # 生成唯一UID
                 'points': box_arr.reshape(-1, 2).tolist(),
                 'font_size': estimated_font_size,
                 'score': score,
@@ -358,13 +396,12 @@ class PaddleOCRTextDetector(TextDetectorBase):
                 ]]
                 
                 # === 创建完整的TextBlock对象 ===
-                text_block = TextBlock(
-                    xyxy=expanded_xyxy,
-                    lines=expanded_lines,
-                    score=np.mean([item['score'] for item in polygon_info_list]),  # 平均置信度
-                    src_is_vertical=actual_vertical,
-                    vertical=actual_vertical
-                )
+                # 为合并后的文本块生成新的UID
+                uid = str(uuid.uuid4())
+                text_block = TextBlock(xyxy=expanded_xyxy, uid=uid)
+                text_block.lines = expanded_lines
+                text_block.src_is_vertical = actual_vertical
+                text_block.vertical = actual_vertical
                 text_block._detected_font_size = median_font_size
                 blk_list.append(text_block)
                 
@@ -380,7 +417,6 @@ class PaddleOCRTextDetector(TextDetectorBase):
                         min_height = max(12, int(median_font_size * 0.8))
                         center_y = (y1 + y2) // 2
                         text_block.xyxy = [x1, center_y - min_height//2, x2, center_y + min_height//2]
-            # blk_list = merged_blks
         else:
             # 不合并文本行，为每个检测框创建文本块
             for item in polygon_info_list:
@@ -405,14 +441,11 @@ class PaddleOCRTextDetector(TextDetectorBase):
                     [x1, y2]   # 左下角
                 ]
 
-                # 创建文本块
-                blk = TextBlock(
-                    xyxy=[x1, y1, x2, y2],
-                    lines=[expanded_points],  # 使用扩展后的多边形线
-                    score=item['score'],
-                    src_is_vertical=actual_vertical,
-                    vertical=actual_vertical
-                )
+                # 创建文本块，使用多边形信息中的UID
+                blk = TextBlock(xyxy=[x1, y1, x2, y2], uid=item['uid'])
+                blk.lines = [expanded_points]
+                blk.src_is_vertical = actual_vertical
+                blk.vertical = actual_vertical
                 blk._detected_font_size = item['font_size']
                 
                 # 确保文本块有有效尺寸
@@ -467,12 +500,6 @@ class PaddleOCRTextDetector(TextDetectorBase):
                 sz = min(fnt_max, sz)
             if fnt_min > 0:
                 sz = max(fnt_min, sz)
-            
-            # # 确保字体大小合理
-            # if sz < 5:
-            #     sz = 12
-            # elif sz > 100:
-            #     sz = 48
             
             blk.font_size = sz
             blk._detected_font_size = sz

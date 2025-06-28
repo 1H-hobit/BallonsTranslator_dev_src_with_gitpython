@@ -1,7 +1,7 @@
 from typing import List, Union, Tuple
 import numpy as np
 import copy
-
+import uuid
 from qtpy.QtWidgets import QApplication, QWidget, QGraphicsItem
 from qtpy.QtCore import QObject, QRectF, Qt, Signal, QPointF, QPoint
 from qtpy.QtGui import QKeyEvent, QTextCursor, QFontMetricsF, QFont, QTextCharFormat, QClipboard
@@ -9,7 +9,7 @@ try:
     from qtpy.QtWidgets import QUndoCommand
 except:
     from qtpy.QtGui import QUndoCommand
-
+import cv2
 from .textitem import TextBlkItem, TextBlock
 from .canvas import Canvas
 from .textedit_area import TransTextEdit, SourceTextEdit, TransPairWidget, SelectTextMiniMenu, TextEditListScrollArea, QVBoxLayout, Widget
@@ -23,6 +23,7 @@ from utils.text_processing import seg_text, is_cjk
 from utils.text_layout import layout_text
 from modules.textdetector.detector_paddleocr import generate_mask_from_original_bbox
 from modules.textdetector.detector_paddleocr import generate_mask_from_user_rect
+
 
 class CreateItemCommand(QUndoCommand):
     def __init__(self, blk_item: TextBlkItem, ctrl, parent=None):
@@ -355,7 +356,7 @@ class SceneTextManager(QObject):
         self.hovering_transwidget : TransTextEdit = None
 
         self.prev_blkitem: TextBlkItem = None
-        self.mask_expand_pixels = getattr(pcfg, 'mask_expand_pixels', 6)  # 默认值6    
+        self.mask_expand_pixels = getattr(pcfg, 'mask_expand_pixels', 6)  # 默认值6   
 
     def on_switch_textitem(self, switch_delta: int, key_event: QKeyEvent = None, current_editing_widget: Union[SourceTextEdit, TransTextEdit] = None):
         n_blk = len(self.textblk_item_list)
@@ -523,6 +524,15 @@ class SceneTextManager(QObject):
             self.textblk_item_list.remove(blkitem)
             self.pairwidget_list.remove(p_widget)
             self.textEditList.removeWidget(p_widget)
+        
+        # 使用UID准确删除多边形信息
+        if hasattr(self.imgtrans_proj, 'polygon_info_list'):
+            polygon_info_list = self.imgtrans_proj.polygon_info_list
+            for blkitem in blkitem_list:
+                uid = blkitem.blk.uid
+                # 通过UID查找并删除对应的多边形
+                polygon_info_list[:] = [p for p in polygon_info_list if p.get('uid') != uid]
+        
         self.updateTextBlkItemIdx()
         self.txtblkShapeControl.setBlkItem(None)
         if selection_changed:
@@ -928,27 +938,31 @@ class SceneTextManager(QObject):
         blkitem.repaint_background()
 
     def onEndCreateTextBlock(self, rect: QRectF):
-
-        # 直接从项目对象获取多边形信息
+        global overlay
+        # 获取当前图像
+        img_array = self.imgtrans_proj.img_array
+        
+        # 获取多边形信息列表
         polygon_info_list = getattr(self.imgtrans_proj, 'polygon_info_list', [])
-
+        
         # 将用户绘制的矩形区域 rect 转换为 numpy 数组 [x1, y1, x2, y2]
         xyxy = np.array([rect.x(), rect.y(), rect.right(), rect.bottom()])
         
         # 坐标四舍五入并转为整数（像素坐标）
         xyxy = np.round(xyxy).astype(np.int32)
-
-        # 将用户绘制的矩形添加到多边形信息列表
-        user_rect_info = {
-            'min_x': xyxy[0],
-            'min_y': xyxy[1],
-            'max_x': xyxy[2],
-            'max_y': xyxy[3]
-        }
-        updated_polygon_info_list = polygon_info_list + [user_rect_info]
-
-        # 创建 TextBlock 对象，存储文本块的坐标和属性
-        block = TextBlock(xyxy)
+        
+        # 创建TextBlock对象，存储文本块的坐标和属性
+        block = TextBlock(xyxy)  # 这里会自动生成UID
+        
+        # # 将用户绘制的矩形添加到多边形信息列表
+        # user_rect_info = {
+        #     'uid': block.uid,  # 使用同一个UID
+        #     'min_x': xyxy[0],
+        #     'min_y': xyxy[1],
+        #     'max_x': xyxy[2],
+        #     'max_y': xyxy[3]
+        # }
+        # updated_polygon_info_list = polygon_info_list + [user_rect_info]
         
         # 计算矩形的宽高：xywh = [x, y, width, height]
         xywh = np.copy(xyxy)
@@ -974,29 +988,35 @@ class SceneTextManager(QObject):
         # 将创建操作加入撤销栈（支持 Ctrl+Z 撤销）
         self.canvas.push_undo_command(CreateItemCommand(blk_item, self))
 
-        # 1. 获取当前图像
-        img_array = self.imgtrans_proj.img_array
-        
-        #如果polygon_info_list有值时，则有检测文本框的mask
+        # 根据多边形信息生成掩码
         if img_array is not None and polygon_info_list:
-            # updated_polygon_info_list是加上用户绘制的矩形坐标xyxy
             mask = generate_mask_from_original_bbox(
-                    img_array,
-                    updated_polygon_info_list,
-                    self.mask_expand_pixels
-                ) 
-            print("在检测文本框的mask的基础上新加了用户绘制的mask掩码")
-        else:
-            # 如果条件不满足，生成当前图像新加的mask掩码
-            mask = generate_mask_from_user_rect(
                 img_array,
-                xyxy,  # 直接使用用户绘制的矩形坐标
+                polygon_info_list,
                 self.mask_expand_pixels
             )
-            
+            print("在检测文本框的mask的基础上新加了用户绘制的mask掩码")
+        else:
+            # 根据当前 mask 状态决定使用哪个图像作为基础
+            base_image = img_array if self.imgtrans_proj.inpainted_array is None else self.imgtrans_proj.mask_array
+            cv2.imshow('base_image', base_image)
+            # 确保 base_image 是三通道（如果是单通道）
+            if len(base_image.shape) == 2:
+                base_image = cv2.cvtColor(base_image, cv2.COLOR_GRAY2BGR)
+            # 生成 mask 并确保尺寸和通道数匹配
+            mask = generate_mask_from_user_rect(base_image, xyxy, mask_expand_pixels=-2)
+            if mask.shape != base_image.shape:
+                mask = cv2.resize(mask, (base_image.shape[1], base_image.shape[0]))
+                if len(mask.shape) == 2:
+                    mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+            # 叠加显示
+            overlay = cv2.addWeighted(base_image, 1, mask, 1, 0)
+            cv2.imshow('overlay', overlay)
+ 
         # 更新项目中的掩码
-        self.imgtrans_proj.mask_array = mask  # 直接设置掩码数组
-        self.imgtrans_proj.inpainted_array = img_array.copy()  # 复制原图作为修复基础
+        self.imgtrans_proj.mask_array = overlay
+        self.imgtrans_proj.inpainted_array = img_array.copy()
+        self.imgtrans_proj.polygon_info_list = polygon_info_list  # 更新多边形信息列表
         
         # 更新画布显示
         self.canvas.updateLayers()

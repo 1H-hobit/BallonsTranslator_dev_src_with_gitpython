@@ -12,7 +12,7 @@ from .split_text_region import split_textblock as split_text_region
 from .fontformat import FontFormat, LineSpacingType, TextAlignment, fix_fontweight_qt
 from .textblock_mask import canny_flood
 from .textlines_merge import sort_pnts, Quadrilateral, merge_bboxes_text_region
-
+import uuid
 
 LANG_LIST = ['eng', 'ja', 'unknown']
 LANGCLS2IDX = {'eng': 0, 'ja': 1, 'unknown': 2}
@@ -40,7 +40,7 @@ class TextBlock:
     src_is_vertical: bool = None
     _detected_font_size: float = -1
     det_model: str = None
-
+    uid: str = field(default_factory=lambda: str(uuid.uuid4()))  # 添加UID字段
     region_mask: np.ndarray = None
     region_inpaint_dict: Dict = None
 
