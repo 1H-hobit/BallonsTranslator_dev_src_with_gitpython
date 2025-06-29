@@ -4,7 +4,7 @@ output/batch_inpaint_image.png
 output/batch_inpaint_image.png
 output/batch_inpaint_mask.png
 batch_inpaint_image.jpg
-batch_inpaint_image.png
+*batch_inpaint_image*
 batch_inpaint_mask.png
 __pycache__
 local_*
