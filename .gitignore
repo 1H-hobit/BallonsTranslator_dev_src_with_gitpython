@@ -61,3 +61,8 @@ Ultralytics/settings.json
 output/batch_inpaint_mask.png
 output/batch_inpaint_image.jpg
 output/batch_inpaint_image.png
+output/batch_inpaint_image.png
+output/batch_inpaint_mask.png
+batch_inpaint_image.jpg
+batch_inpaint_image.png
+batch_inpaint_mask.png
