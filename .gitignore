@@ -8,7 +8,6 @@ data/testpacks/eng_dontupload
 data/testpacks/testpacks
 data/*.png
 data/testpacks
-config/textstyles
 release
 libs
 .btrans_cache
@@ -23,7 +22,6 @@ test_dir
 tmp
 logs
 ballontrans_pylibs_win
-config/config.json
 localtmp*
 
 .vscode
